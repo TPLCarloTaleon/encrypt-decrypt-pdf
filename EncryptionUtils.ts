@@ -1,3 +1,10 @@
+/**
+ * This is a wrapper library around:
+ * - expo-file-system
+ * - crypto-es
+ *
+ * That gives utilities for easily decrypting and encrypting files.
+ */
 import * as FileSystem from "expo-file-system";
 import CryptoES from "crypto-es";
 

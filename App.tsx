@@ -1,20 +1,21 @@
 import "expo-dev-client";
 
-import { SafeAreaView, Text, useWindowDimensions, View, Button, StatusBar, TextInput } from "react-native";
-// import { WebView } from "react-native-webview";
-// import Constants from "expo-constants";
-// import { StyleSheet } from "react-native";
-import * as FileSystem from "expo-file-system";
+import { SafeAreaView, Text, View, Button, StatusBar, TextInput, TouchableOpacity } from "react-native";
 import PdfRendererView from "react-native-pdf-renderer";
 import { useCallback, useEffect, useState } from "react";
-import EncryptionUtils from "./EncryptionUtils";
+import EncryptedFileSystem from "./EncryptedFileSystem";
 
-const pdfSource = {
-  uri: "https://arquisoft.github.io/slides/course1920/seminars/SemEn-07-ReactNative.pdf",
-  // Insecure HTTPs
-  // uri: "https://samples.leanpub.com/thereactnativebook-sample.pdf",
-  // uri: "https://www.africau.edu/images/default/sample.pdf",
-  cache: true,
+/** Idealy this is actually data that's coming from the notes-service. */
+const notesFileData = {
+  /** This is the S3 URL or a temporary signed URL for the asset. */
+  downloadURL: "https://arquisoft.github.io/slides/course1920/seminars/SemEn-07-ReactNative.pdf",
+  /**
+   * The file will be saved in this format:
+   * - Downloaded (then deleted): `{fileId}-raw.{fileExtension}`
+   * - Encrypted (will last for a long time): `{fileId}.{fileExtension}`
+   * - Decrypted (will be cached temporarily for viewing): `{fileId}-decrypted.{fileExtension}`
+   */
+  fileId: "P3GAP-TaxonomyChapter1",
 };
 
 /** Temporary, this will be a secure key. */
@@ -31,37 +32,31 @@ export default function App() {
   const [downloadedSource, setDownloadedSource] = useState<string>("");
   const [decryptedSource, setDecryptedSource] = useState<string>("");
 
-  const downloadWithExpoFileSystem = useCallback(async () => {
-    /** The URL where the PDF should be downloaded from. */
-    const sourcePDFURL = pdfSource.uri;
-
-    /** The path where the PDF will be stored locally. (Should be deleted in production). */
-    const downloadedPath = FileSystem.documentDirectory + "file.pdf";
-
-    /** The path where the encrypted PDF will be stored locally. */
-    const encryptedPDFPath = FileSystem.documentDirectory + "file-encrypted.txt";
-
-    /** The path where the decrypted PDF will be stored locally. */
-    const decryptedPDFPath = FileSystem.documentDirectory + "file-decrypted.pdf";
-
+  const downloadAndDisplay = useCallback(async () => {
     try {
       setDownloading(true);
-      /**
-       * Download the PDF file with any other library, like  "expo-file-system", "rn-fetch-blob" or "react-native-blob-util"
-       */
-      const response = await FileSystem.downloadAsync(sourcePDFURL, downloadedPath);
 
-      /** Encrypt it. */
-      await EncryptionUtils.encrypt(downloadedPath, encryptedPDFPath, KEY);
+      // ----------- 1. Download and Encrypt. -----------
 
-      /** Decrypt it. */
-      await EncryptionUtils.decrypt(encryptedPDFPath, decryptedPDFPath, KEY);
+      const encryptedFileInfo = await EncryptedFileSystem.checkExistsByFileId(notesFileData.fileId);
 
-      /*
-       * Then, set the local file URI to state and pass to the PdfRendererView source prop.
-       */
-      setDownloadedSource(response.uri);
-      setDecryptedSource(decryptedPDFPath);
+      if (!encryptedFileInfo.exists) {
+        const { encryptedPath, rawPath } = await EncryptedFileSystem.download(
+          notesFileData.downloadURL,
+          notesFileData.fileId,
+          { _debugDontDelete: true }
+        );
+        setDownloadedSource(rawPath);
+      } else {
+        // Already exists
+        setDownloadedSource(encryptedFileInfo.path);
+      }
+
+      // ----------- 2. Decrypt and Show. -----------
+
+      const decryptedPath = await EncryptedFileSystem.getDecryptedFileById(notesFileData.fileId);
+
+      setDecryptedSource(decryptedPath);
     } catch (err) {
       console.warn(err);
     } finally {
@@ -70,9 +65,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    downloadWithExpoFileSystem();
-    // downloadWithBlobUtil();
-  }, [downloadWithExpoFileSystem]);
+    downloadAndDisplay();
+  }, [downloadAndDisplay]);
 
   const renderPdfView = () => {
     if (downloading) {
@@ -85,29 +79,49 @@ export default function App() {
 
     return (
       <>
-        <Button title="Single Page" onPress={() => setSinglePage((prev) => !prev)} />
-        <View style={{ flexDirection: "row", alignItems: "center", padding: 4 }}>
+        <Button title={singlePage ? "Single Page" : "Multi-Page"} onPress={() => setSinglePage((prev) => !prev)} />
+
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, gap: 16 }}>
           <Text>Downloaded Path: </Text>
-          <TextInput value={viewedSource} style={{ height: 40, borderWidth: 1, padding: 10, width: 200 }} />
+          <TextInput value={downloadedSource} style={{ height: 40, flex: 1, borderWidth: 1, padding: 10 }} />
+          <TouchableOpacity
+            style={{
+              width: 150,
+              justifyContent: "center",
+              alignItems: "center",
+              backgroundColor: "pink",
+              paddingVertical: 10,
+            }}
+            onPress={() => {
+              setViewedSource(downloadedSource);
+            }}
+          >
+            <Text>View Downloaded</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, gap: 16 }}>
+          <Text>Decrypted Path: </Text>
+          <TextInput value={decryptedSource} style={{ height: 40, flex: 1, borderWidth: 1, padding: 10 }} />
+          <TouchableOpacity
+            style={{
+              width: 150,
+              justifyContent: "center",
+              alignItems: "center",
+              backgroundColor: "pink",
+              paddingVertical: 10,
+            }}
+            onPress={() => {
+              setViewedSource(decryptedSource);
+            }}
+          >
+            <Text>View Decrypted</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", padding: 4 }}>
           <Text>Current Page: </Text>
           <TextInput value={currentPage.toString()} style={{ height: 40, borderWidth: 1, padding: 10, width: 200 }} />
-
-          <Button
-            title="View Downloaded"
-            onPress={() => {
-              setViewedSource(downloadedSource);
-            }}
-          />
-
-          <Button
-            title="View Decrypted"
-            onPress={() => {
-              setViewedSource(decryptedSource);
-            }}
-          />
         </View>
 
         <PdfRendererView
